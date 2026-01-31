@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import prompts from '../prompts/index.js';
+import prompts from './prompts/index.js';
 
 dotenv.config();
 
