@@ -1,236 +1,75 @@
 import Anthropic from '@anthropic-ai/sdk';
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import prompts from './prompts/index.js';
 
-dotenv.config();
-
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-// CORS configuration
-const corsOptions = {
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
-  methods: ['GET', 'POST'],
-  credentials: true
+// Language prompts
+const prompts = {
+  en: {
+    system: "You are a direct, action-focused coach. When someone shares overthinking, respond ONLY with valid JSON in this exact format:\n{\n  \"type\": \"fear|perfectionism|decision_overload|avoidance|rumination\",\n  \"action\": \"One concrete action to take RIGHT NOW (10-30 words)\",\n  \"ignore\": \"One thought pattern to actively dismiss (10-20 words)\",\n  \"reframe\": \"A grounding perspective shift (10-25 words)\"\n}\n\nRules:\n- No preamble, no explanation, ONLY the JSON object\n- Action must be immediate and specific\n- Use second person (\"you\")\n- Be direct and clear\n- Match the user's language intensity"
+  },
+  sv: {
+    system: "Du är en direkt, handlingsfokuserad coach. När någon delar övertänkande, svara ENDAST med giltig JSON i detta exakta format:\n{\n  \"type\": \"fear|perfectionism|decision_overload|avoidance|rumination\",\n  \"action\": \"En konkret handling att ta JUST NU (10-30 ord)\",\n  \"ignore\": \"Ett tankemönster att aktivt avfärda (10-20 ord)\",\n  \"reframe\": \"Ett jordande perspektivskifte (10-25 ord)\"\n}\n\nRegler:\n- Ingen inledning, ingen förklaring, ENDAST JSON-objektet\n- Handlingen måste vara omedelbar och specifik\n- Använd andra person (\"du\")\n- Var direkt och tydlig"
+  },
+  cs: {
+    system: "Jsi přímý, akčně zaměřený kouč. Když někdo sdílí přemýšlení, odpověz POUZE platným JSON v tomto přesném formátu:\n{\n  \"type\": \"fear|perfectionism|decision_overload|avoidance|rumination\",\n  \"action\": \"Jedna konkrétní akce k provedení PRÁVĚ TEĎ (10-30 slov)\",\n  \"ignore\": \"Jeden myšlenkový vzorec k aktivnímu odmítnutí (10-20 slov)\",\n  \"reframe\": \"Uzemňující změna perspektivy (10-25 slov)\"\n}\n\nPravidla:\n- Žádný úvod, žádné vysvětlení, POUZE JSON objekt\n- Akce musí být okamžitá a konkrétní\n- Používej druhou osobu (\"ty\")\n- Buď přímý a jasný"
+  },
+  sk: {
+    system: "Si priamy, akčne zameraný kouč. Keď niekto zdieľa premýšľanie, odpovedz IBA platným JSON v tomto presnom formáte:\n{\n  \"type\": \"fear|perfectionism|decision_overload|avoidance|rumination\",\n  \"action\": \"Jedna konkrétna akcia na vykonanie PRÁVE TEraz (10-30 slov)\",\n  \"ignore\": \"Jeden myšlienkový vzorec na aktívne odmietnutie (10-20 slov)\",\n  \"reframe\": \"Uzemňujúca zmena perspektívy (10-25 slov)\"\n}\n\nPravidlá:\n- Žiadny úvod, žiadne vysvetlenie, IBA JSON objekt\n- Akcia musí byť okamžitá a konkrétna\n- Používaj druhú osobu (\"ty\")\n- Buď priamy a jasný"
+  },
+  ru: {
+    system: "Ты прямой, ориентированный на действия коуч. Когда кто-то делится чрезмерными размышлениями, отвечай ТОЛЬКО валидным JSON в этом точном формате:\n{\n  \"type\": \"fear|perfectionism|decision_overload|avoidance|rumination\",\n  \"action\": \"Одно конкретное действие для выполнения ПРЯМО СЕЙЧАС (10-30 слов)\",\n  \"ignore\": \"Один паттерн мышления для активного отклонения (10-20 слов)\",\n  \"reframe\": \"Заземляющий сдвиг перспективы (10-25 слов)\"\n}\n\nПравила:\n- Никакой преамбулы, никаких объяснений, ТОЛЬКО JSON объект\n- Действие должно быть немедленным и конкретным\n- Используй второе лицо (\"ты\")\n- Будь прямым и ясным"
+  },
+  uk: {
+    system: "Ти прямий, орієнтований на дії коуч. Коли хтось ділиться надмірними роздумами, відповідай ЛИШЕ валідним JSON у цьому точному форматі:\n{\n  \"type\": \"fear|perfectionism|decision_overload|avoidance|rumination\",\n  \"action\": \"Одна конкретна дія для виконання ПРЯМО ЗАРАЗ (10-30 слів)\",\n  \"ignore\": \"Один патерн мислення для активного відхилення (10-20 слів)\",\n  \"reframe\": \"Заземлюючий зсув перспективи (10-25 слів)\"\n}\n\nПравила:\n- Ніякої преамбули, ніяких пояснень, ЛИШЕ JSON об'єкт\n- Дія має бути негайною та конкретною\n- Використовуй другу особу (\"ти\")\n- Будь прямим та ясним"
+  }
 };
 
-app.use(cors(corsOptions));
-app.use(express.json());
+export default async function handler(req, res) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    version: '1.0.0'
-  });
-});
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-// Main coaching endpoint
-app.post('/api/coach', async (req, res) => {
   try {
-    const { userInput, language = 'en' } = req.body;
+    const { text, language = 'en' } = req.body;
 
-    // Validation
-    if (!userInput || userInput.trim().length === 0) {
-      return res.status(400).json({ 
-        error: 'User input is required',
-        code: 'MISSING_INPUT'
-      });
+    if (!text) {
+      return res.status(400).json({ error: 'Text is required' });
     }
 
-    if (userInput.length > 500) {
-      return res.status(400).json({ 
-        error: 'Input too long (max 500 characters)',
-        code: 'INPUT_TOO_LONG'
-      });
-    }
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY
+    });
 
-    // Get language-specific prompt
-    const promptFunction = prompts[language];
-    if (!promptFunction) {
-      return res.status(400).json({ 
-        error: `Unsupported language: ${language}`,
-        code: 'UNSUPPORTED_LANGUAGE'
-      });
-    }
+    const prompt = prompts[language] || prompts.en;
 
-    const systemPrompt = promptFunction(userInput);
-
-    // Call Claude API
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      temperature: 0.7,
-      system: systemPrompt,
+      max_tokens: 1000,
+      system: prompt.system,
       messages: [
         {
           role: 'user',
-          content: 'Analyze this overthinking and provide the response.'
+          content: text
         }
       ]
     });
 
-    // Extract and parse response
     const responseText = message.content[0].text;
-    
-    // Try to extract JSON from response (Claude sometimes adds text before/after)
-    let result;
-    try {
-      // First try direct parse
-      result = JSON.parse(responseText);
-    } catch (e) {
-      // Try to extract JSON from markdown code blocks or surrounding text
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        result = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('Invalid JSON response from AI');
-      }
-    }
+    const parsed = JSON.parse(responseText);
 
-    // Validate response structure
-    const requiredFields = ['type', 'action', 'ignore', 'reframe'];
-    const missingFields = requiredFields.filter(field => !result[field]);
-    
-    if (missingFields.length > 0) {
-      throw new Error(`Missing fields in AI response: ${missingFields.join(', ')}`);
-    }
-
-    // Validate overthinking type
-    const validTypes = ['fear', 'perfectionism', 'decision_overload', 'avoidance', 'rumination'];
-    if (!validTypes.includes(result.type)) {
-      result.type = 'rumination'; // Default fallback
-    }
-
-    // Return successful response
-    res.json({
-      success: true,
-      data: {
-        type: result.type,
-        action: result.action,
-        ignore: result.ignore,
-        reframe: result.reframe
-      },
-      metadata: {
-        language,
-        timestamp: new Date().toISOString(),
-        model: 'claude-sonnet-4-20250514'
-      }
-    });
-
+    return res.status(200).json(parsed);
   } catch (error) {
     console.error('Coach API error:', error);
-
-    // Handle specific Anthropic API errors
-    if (error.status === 401) {
-      return res.status(500).json({
-        error: 'API authentication failed',
-        code: 'AUTH_ERROR',
-        message: 'Invalid or missing API key'
-      });
-    }
-
-    if (error.status === 429) {
-      return res.status(429).json({
-        error: 'Rate limit exceeded',
-        code: 'RATE_LIMIT',
-        message: 'Too many requests. Please try again later.'
-      });
-    }
-
-    // Generic error response
-    res.status(500).json({
-      error: 'Internal server error',
-      code: 'INTERNAL_ERROR',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'An error occurred processing your request'
+    return res.status(500).json({ 
+      error: 'Failed to process request',
+      details: error.message 
     });
   }
-});
-
-// PLACEHOLDER: Stripe checkout endpoint (future implementation)
-app.post('/api/create-checkout', async (req, res) => {
-  res.status(501).json({
-    error: 'Payment integration not yet implemented',
-    code: 'NOT_IMPLEMENTED',
-    message: 'Stripe integration coming soon'
-  });
-  
-  /* FUTURE IMPLEMENTATION:
-  const { priceId, successUrl, cancelUrl } = req.body;
-  
-  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    payment_method_types: ['card'],
-    line_items: [{ price: priceId, quantity: 1 }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-  });
-  
-  res.json({ sessionUrl: session.url });
-  */
-});
-
-// PLACEHOLDER: Stripe webhook endpoint (future implementation)
-app.post('/api/stripe-webhook', async (req, res) => {
-  res.status(501).json({
-    error: 'Webhook not yet implemented',
-    code: 'NOT_IMPLEMENTED'
-  });
-  
-  /* FUTURE IMPLEMENTATION:
-  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  const sig = req.headers['stripe-signature'];
-  
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-  
-  switch (event.type) {
-    case 'checkout.session.completed':
-      // Update user subscription in database
-      break;
-    case 'customer.subscription.deleted':
-      // Handle cancellation
-      break;
-  }
-  
-  res.json({ received: true });
-  */
-});
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    code: 'NOT_FOUND'
-  });
-});
-
-// Start server (only if not in Vercel serverless environment)
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`🚀 Overthinking Coach API running on port ${PORT}`);
-    console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-    console.log(`🤖 Claude API: ${process.env.ANTHROPIC_API_KEY ? 'Configured ✓' : 'Missing ✗'}`);
-  });
 }
-
-// Export for Vercel serverless
-export default app;
